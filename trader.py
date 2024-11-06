@@ -49,23 +49,23 @@ class StockTrader:
                     raise TimeoutError("Timeout waiting for initial price data")
                 time.sleep(1)
 
-            self.ib.start_price_stream(symbol)
+            # self.ib.start_price_stream(symbol)
 
             # Store reference price for calculating triggers
-            reference_price = self.ib.current_price
-            self.logger.info(f"Started monitoring {symbol} at ${reference_price:.2f}")
+            # reference_price = self.ib.current_price
 
             STOP_LOSS_PERCENTAGE = -0.02  # 2% stop loss
 
             while True:
                 current_price = self.ib.current_price
+
                 if current_price <= 0:  # Add price validation
                     self.logger.warning("Invalid price received, skipping cycle")
                     time.sleep(1)
                     continue
 
-                price_change = (current_price - reference_price) / reference_price
-
+                price_change = (current_price - self.reference_price) / self.reference_price
+                self.logger.info(f"price_change ${price_change:.2f} at reference_price ${self.reference_price:.2f}")
                 # Check stop loss for all positions
                 for position in self.positions:
                     loss_percentage = (current_price - position['price']) / position['price']
@@ -81,12 +81,12 @@ class StockTrader:
                 if len(self.positions) < max_positions and price_change <= buy_trigger_percentage:
                     self.execute_buy_order(current_price, position_size)
                     # Update reference price after buy
-                    reference_price = current_price
+                    self.reference_price = current_price
 
                 # Update reference price if price moved significantly
                 if abs(price_change) > max(abs(buy_trigger_percentage), sell_trigger_percentage):
-                    reference_price = current_price
-                    self.logger.info(f"Updated reference price to ${reference_price:.2f}")
+                    self.reference_price = current_price
+                    self.logger.info(f"Updated reference price to ${self.reference_price:.2f}")
 
                 time.sleep(1)
 
@@ -116,6 +116,18 @@ class StockTrader:
     def execute_buy_order(self, current_price, position_size):
         """Execute buy order at current price level"""
         try:
+            # Verify connection
+            if not self.ib.is_connected:
+                self.logger.error("Not connected to IB")
+                return False
+
+            # Get next valid order ID
+            order_id = self.ib.get_next_order_id()
+            if order_id is None:
+                self.logger.error("Failed to get valid order ID")
+                return False
+
+            # Create contract
             contract = Contract()
             contract.symbol = self.ib.symbol
             contract.secType = "STK"
@@ -132,22 +144,38 @@ class StockTrader:
             order.lmtPrice = limit_price
             order.tif = "DAY"
 
-            trade = self.ib.placeOrder(contract, order)
+            # Log order details
+            self.logger.info(f"Placing order {order_id}: BUY {position_size} {contract.symbol} @ ${limit_price:.2f}")
 
+            # Place order
+            self.ib.placeOrder(order_id, contract, order)
+
+            # Create trade object
+            trade = {
+                'order': order,
+                'contract': contract,
+                'order_id': order_id,
+                'status': None,
+                'filled': 0,
+                'avgFillPrice': 0,
+                'orderStatus': None
+            }
+
+            # Wait for fill
             if self.wait_for_fill(trade):
-                actual_fill_price = trade.orderStatus.avgFillPrice
+                actual_fill_price = trade.get('avgFillPrice', current_price)
 
-                # Add new position to positions list
+                # Add position
                 self.positions.append({
                     'shares': position_size,
                     'price': actual_fill_price,
                     'timestamp': datetime.now()
                 })
 
-                self.logger.info(
-                    f"Buy executed: {position_size} shares at ${actual_fill_price:.2f}"
-                )
+                self.logger.info(f"Buy executed: {position_size} shares at ${actual_fill_price:.2f}")
                 return True
+
+            return False
 
         except Exception as e:
             self.logger.error(f"Buy execution error: {str(e)}")
@@ -205,14 +233,47 @@ class StockTrader:
         Returns: True if filled, False if timeout or error
         """
         start_time = time.time()
-        while not trade.isDone():
+
+        while True:
+            # Check if timeout reached
             if time.time() - start_time > timeout:
                 self.logger.error("Order timeout - cancelling order")
-                self.ib.cancelOrder(trade.order)
+                self.ib.cancelOrder(trade['order_id'])
                 return False
-            self.ib.sleep(1)
 
-        return self.handle_order_status(trade)
+            # Get latest order status
+            status = self.ib.get_order_status(trade['order_id'])
+            if status:
+                trade['status'] = status.get('status')
+                trade['filled'] = status.get('filled', 0)
+                trade['avgFillPrice'] = status.get('avgFillPrice', 0)
+                trade['orderStatus'] = status
+
+                # Check if order is complete
+                if trade['status'] == 'Filled':
+                    return self.handle_order_status(trade)
+                elif trade['status'] in ['Cancelled', 'ApiCancelled', 'Error']:
+                    return self.handle_order_status(trade)
+
+            time.sleep(1)
+
+    def handle_order_status(self, trade):
+        """Handle order status updates"""
+        status = trade.get('orderStatus', {})
+
+        if trade['status'] == 'Filled':
+            self.logger.info(
+                f"Order filled: {trade['filled']} shares at average price ${trade['avgFillPrice']:.2f}"
+            )
+            return True
+        elif trade['status'] in ['Cancelled', 'ApiCancelled']:
+            self.logger.warning(f"Order cancelled: {status.get('whyHeld', 'Unknown reason')}")
+            return False
+        elif trade['status'] == 'Error':
+            self.logger.error(f"Order error: {status.get('whyHeld', 'Unknown error')}")
+            return False
+
+        return None
 
     def handle_order_status(self, trade):
         """Handle order status updates"""
