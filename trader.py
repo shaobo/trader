@@ -41,6 +41,7 @@ class StockTrader:
             self.logger.info(f"Starting price monitoring for {symbol}")
             self.logger.info(f"Current connection status: {self.ib.is_connected}")
 
+            # self.ib.start_price_stream(symbol)
             # Add timeout for initial price data
             timeout = 30  # seconds
             start_time = time.time()
@@ -49,7 +50,6 @@ class StockTrader:
                     raise TimeoutError("Timeout waiting for initial price data")
                 time.sleep(1)
 
-            # self.ib.start_price_stream(symbol)
 
             # Store reference price for calculating triggers
             # reference_price = self.ib.current_price

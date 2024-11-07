@@ -106,6 +106,7 @@ class TradingGUI:
             self.trader.ib.connect("127.0.0.1", 7497, 1)
             threading.Thread(target=self.trader.ib.run).start()
             self.update_status("Connecting to IB...")
+            self.trader.ib.is_connected = True #todo
             self.connect_btn.configure(state='disabled')
         except Exception as e:
             self.update_status(f"Connection error: {str(e)}", error=True)

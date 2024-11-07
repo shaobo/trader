@@ -21,21 +21,19 @@ def main():
 
     try:
         # Create instances
-        ib_connection = IBConnection()
-        if not ib_connection.connect_and_init():
-            logger.error("Failed to connect to IB")
-            return
-        trader = StockTrader(ib_connection)
+        ib = IBConnection()
+        # if not ib_connection.connect_and_init():
+        #     logger.error("Failed to connect to IB")
+        #     return
+        trader = StockTrader(ib)
         gui = TradingGUI(trader)
 
         # Start the application
         logger.info("Starting trading application")
         gui.run()
+        ib.connect_and_init()
     except Exception as e:
         logger.error(f"Error in main: {str(e)}")
-    finally:
-        if ib_connection.is_connected:
-            ib_connection.disconnect()
 
 if __name__ == "__main__":
     main()
