@@ -142,7 +142,9 @@ class StockTrader:
             order.totalQuantity = position_size
             order.orderType = "LMT"
             order.lmtPrice = limit_price
-            order.tif = "DAY"
+            # order.tif = "DAY"
+            order.tif = 'GTC'  # Good-Til-Canceled
+            order.outsideRth = True  # Allow order outside regular trading hours
 
             # Log order details
             self.logger.info(f"Placing order {order_id}: BUY {position_size} {contract.symbol} @ ${limit_price:.2f}")
